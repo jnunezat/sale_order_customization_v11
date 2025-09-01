@@ -20,7 +20,6 @@ class SaleOrderLine(models.Model):
             self.product_packaging = False
         return {}
     
-    @api.depends('product_id', 'purchase_price', 'product_uom_qty', 'qty_available', 'price_unit', 'price_subtotal_disp')
     def _product_margin_disp(self):
         if not self.env.in_onchange:
             # prefetch the fields needed for the computation
@@ -30,7 +29,6 @@ class SaleOrderLine(models.Model):
             price = line.purchase_price
             line.margin_disp = currency.round(line.price_subtotal_disp - (price * line.qty_available))
 
-    @api.depends('product_id.virtual_available', 'product_uom_qty', 'product_id')
     def _compute_qty_available(self):
         for line in self:
             qty_available = line.product_id.qty_available - line.product_id.outgoing_qty
@@ -41,7 +39,6 @@ class SaleOrderLine(models.Model):
             elif qty_available > line.product_uom_qty:
                 line.qty_available = line.product_uom_qty
 
-    @api.depends('qty_available', 'product_uom_qty', 'discount', 'price_unit', 'tax_id')
     def _compute_amount_disp(self):
         """
         Compute the amounts of the SO line.
@@ -63,27 +60,23 @@ class SaleOrder(models.Model):
     margin_porciento = fields.Float(compute='_product_margin_porc', digits=dp.get_precision('Product Price'), store=False)
     margin_porciento_disp = fields.Float(compute='_product_margin_disp', digits=dp.get_precision('Product Price'), store=False)
     amount_untaxed_disp = fields.Monetary(string='Base imponible', store=False, readonly=True, compute='_amount_all_disp')
-    amount_tax_disp = fields.Monetary(string='Impuestos', store=True, readonly=True, compute='_amount_all_disp')
-    amount_total_disp = fields.Monetary(string='Total', store=True, readonly=True, compute='_amount_all_disp')
+    amount_tax_disp = fields.Monetary(string='Impuestos', store=False, readonly=True, compute='_amount_all_disp')
+    amount_total_disp = fields.Monetary(string='Total', store=False, readonly=True, compute='_amount_all_disp')
 
     back_order_id = fields.Many2one('sale.order.backorder', string="Backorder generado", readonly=True)
     back_order_origin_id = fields.Many2one('sale.order.backorder', string="Backorder origen", readonly=True)
     transport_company_id = fields.Many2one('res.partner')
 
-    @api.depends('margin', 'amount_untaxed')
     def _product_margin_porc(self):
         for order in self:
             order.margin_porciento = order.margin/order.amount_untaxed*100 if order.amount_untaxed>0 else 0
 
-    @api.depends('order_line.margin_disp')
     def _product_margin_disp(self):
         for order in self:
             if order.order_line:
                 order.margin_disp = sum(order.order_line.filtered(lambda r: r.state != 'cancel').mapped('margin_disp'))
                 order.margin_porciento_disp = order.margin_disp/order.amount_untaxed_disp*100 if order.amount_untaxed_disp>0 else 0
        
-
-    @api.depends('order_line.price_total_disp')
     def _amount_all_disp(self):
         """
         Compute the total amounts of the SO.
@@ -93,70 +86,50 @@ class SaleOrder(models.Model):
             for line in order.order_line:
                 amount_untaxed_disp += line.price_subtotal_disp
                 amount_tax_disp += line.price_tax_disp
-            order.update({
-                'amount_untaxed_disp': amount_untaxed_disp,
-                'amount_tax_disp': amount_tax_disp,
-                'amount_total_disp': amount_untaxed_disp + amount_tax_disp,
-            })
-   
-    @api.depends('order_line.price_total_disp')
-    def _amount_all_disp(self):
-        """
-        Compute the total amounts of the SO.
-        """
-        for order in self:
-            amount_untaxed_disp = amount_tax_disp = 0.0
-            for line in order.order_line:
-                amount_untaxed_disp += line.price_subtotal_disp
-                amount_tax_disp += line.price_tax_disp
-            order.update({
-                'amount_untaxed_disp': amount_untaxed_disp,
-                'amount_tax_disp': amount_tax_disp,
-                'amount_total_disp': amount_untaxed_disp + amount_tax_disp,
-            })
+            order.amount_untaxed_disp = amount_untaxed_disp
+            order.amount_untaxed_disp = amount_tax_disp
+            order.amount_untaxed_disp = amount_untaxed_disp + amount_tax_disp
 
-    # @api.multi
-    # def action_confirm(self):
-    #     self.back_order_id = False
-    #     if any(line.qty_available < line.product_uom_qty for line in self.order_line) and self.env.context.get('origin_backorder')!=1:
-    #         backorder_id = self.env['sale.order.backorder'].create({
-    #             'sale_order_origin_id': self.id,
-    #             'partner_id': self.partner_id.id,
-    #             'company_id': self.company_id.id,
-    #             'pricelist_id': self.pricelist_id.id,
-    #             'partner_invoice_id': self.partner_invoice_id.id,
-    #             'partner_shipping_id': self.partner_shipping_id.id,
-    #             'payment_term_id': self.payment_term_id.id,
-    #             'transport_company_id': self.transport_company_id.id if self.transport_company_id else False
-    #         })
-    #         self.back_order_id = backorder_id.id            
-    #         model_line = self.env['sale.order.backorder.line']
-    #         for line in self.order_line:
-    #             if line.product_uom_qty <= 0:
-    #                 raise exceptions.UserError("La cantidad del producto de todas las líneas debe ser mayor a cero.")            
-    #             if line.qty_available < line.product_uom_qty:
-    #                 """ if line.qty_available <= 0:
-    #                     raise exceptions.UserError("El producto %s no tiene cantidad disponible." % line.product_id.name) """
-    #                 cant_pendiente = line.product_uom_qty - line.qty_available
-    #                 line.product_uom_qty = line.qty_available
-    #                 model_line.create({
-    #                     'product_id': line.product_id.id,
-    #                     'product_uom_qty': cant_pendiente,
-    #                     'discount': line.discount,
-    #                     'price_unit': line.price_unit,
-    #                     'backorder_id': backorder_id.id                    
-    #                 })           
+    @api.multi
+    def action_confirm(self):
+        self.back_order_id = False
+        if any(line.qty_available < line.product_uom_qty for line in self.order_line) and self.env.context.get('origin_backorder')!=1:
+            backorder_id = self.env['sale.order.backorder'].create({
+                'sale_order_origin_id': self.id,
+                'partner_id': self.partner_id.id,
+                'company_id': self.company_id.id,
+                'pricelist_id': self.pricelist_id.id,
+                'partner_invoice_id': self.partner_invoice_id.id,
+                'partner_shipping_id': self.partner_shipping_id.id,
+                'payment_term_id': self.payment_term_id.id,
+                'transport_company_id': self.transport_company_id.id if self.transport_company_id else False
+            })
+            self.back_order_id = backorder_id.id            
+            model_line = self.env['sale.order.backorder.line']
+            for line in self.order_line:
+                if line.product_uom_qty <= 0:
+                    raise exceptions.UserError("La cantidad del producto de todas las líneas debe ser mayor a cero.")            
+                if line.qty_available < line.product_uom_qty:
+                    cant_pendiente = line.product_uom_qty - line.qty_available
+                    line.product_uom_qty = line.qty_available
+                    model_line.create({
+                        'product_id': line.product_id.id,
+                        'product_uom_qty': cant_pendiente,
+                        'discount': line.discount,
+                        'price_unit': line.price_unit,
+                        'backorder_id': backorder_id.id                    
+                    })           
         
-    #     # Check if there are lines with product_uom_qty > 0
-    #     valid_lines = self.order_line.filtered(lambda line: line.product_uom_qty > 0)
-    #     res = True
-    #     if valid_lines:            
-    #         # Remove lines with product_uom_qty == 0
-    #         self.order_line.filtered(lambda line: line.product_uom_qty == 0).unlink()
-    #         res=super(SaleOrder,self).action_confirm()
-    #     if self.back_order_id:
-    #         self.message_post(body="Se ha generado un backorder para el pedido %s." % self.name)
-    #     return res  
+        # Check if there are lines with product_uom_qty > 0
+        valid_lines = self.order_line.filtered(lambda line: line.product_uom_qty > 0)
+        res = True
+        if valid_lines:            
+            # Remove lines with product_uom_qty == 0
+            self.order_line.filtered(lambda line: line.product_uom_qty == 0).unlink()
+            res=super(SaleOrder,self).action_confirm()
+        if self.back_order_id:
+            self.message_post(body="Se ha generado un backorder para el pedido %s." % self.name)
+        return res
     
     @api.multi
     def _get_tax_amount_by_group_disp(self):
