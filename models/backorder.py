@@ -172,6 +172,8 @@ class SaleOrderBackorderLine(models.Model):
             return
 
         Pol = self.env['purchase.order.line']
+
+        # agrupar líneas por backorder (cada uno con su fecha base)
         back_to_lines = {}
         for line in self:
             if line.backorder_id and line.product_id:
@@ -186,6 +188,7 @@ class SaleOrderBackorderLine(models.Model):
                     l.product_qty_prev = 0
                 continue
 
+            # 1) mínima date_planned por producto (UNA consulta)
             rows = Pol.read_group(
                 domain=[
                     ('order_id.state', '=', 'purchase'),
@@ -196,8 +199,21 @@ class SaleOrderBackorderLine(models.Model):
                 groupby=['product_id'],
                 lazy=False,
             )
-            min_by_prod = {r['product_id'][0]: r['date_planned_min'] for r in rows}
 
+            def _prod_id_val(v):
+                # read_group devuelve m2o como (id, name) o como id según versión
+                return v[0] if isinstance(v, (list, tuple)) else v
+
+            def _min_date(row):
+                # tolerante a versiones: v11/12 -> 'date_planned'; v13+ -> 'date_planned_min'
+                return row.get('date_planned') or row.get('date_planned_min')
+
+            min_by_prod = {
+                _prod_id_val(r['product_id']): _min_date(r)
+                for r in rows
+            }
+
+            # 2) cantidad para (producto, min_date) con pequeña caché
             qty_cache = {}
             for l in lines:
                 dt = min_by_prod.get(l.product_id.id)
@@ -213,6 +229,7 @@ class SaleOrderBackorderLine(models.Model):
                         qty_cache[key] = pol.product_qty if pol else 0
                     l.product_qty_prev = qty_cache[key]
                 else:
+                    # sin PO futuro → usar fecha del backorder como respaldo (no rompe el sorted)
                     l.date_prev = bo.date
                     l.product_qty_prev = 0
 
