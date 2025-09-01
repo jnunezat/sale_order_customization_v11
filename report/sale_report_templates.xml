@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- <template id="report_saleorder_document_inherit_go_home_ds"
+        inherit_id="sale.report_saleorder_document"> -->
+    <template id="report_saleorder_document_inherit_go_home_ds"
+        inherit_id="go_home.report_saleorder_document_inherit_go_home">
+        <xpath expr="//table[@class='table table-condensed']" position="replace">
+            <table class="table table-condensed">
+                <thead>
+                    <tr>
+                        <th>Descripción</th>
+                        <th class="text-right">Cantidad</th>
+                        <th class="text-right" t-if="doc.state in ['draft','sent']">Cantidad disp</th>
+                        <th class="text-right">Precio base</th>
+                        <th class="text-right" groups="sale.group_discount_per_so_line">Disc.(%)</th>
+                        <th class="text-right">Precio Unit Desc</th>
+                        <th class="text-right" style="display:none">Impuestos</th>
+                        <th class="text-right" groups="sale.group_show_price_subtotal">SubTotal</th>     
+                        <th class="text-right" t-if="doc.state in ['draft','sent']" groups="sale.group_show_price_subtotal">SubTotal disp</th>                   
+                        <th class="text-right price_tax_included" groups="sale.group_show_price_total">Total</th>  
+                        <th class="text-right price_tax_included" t-if="doc.state in ['draft','sent']" groups="sale.group_show_price_total">Total disp</th>                     
+                    </tr>
+               </thead>
+               <tbody class="sale_tbody">
+                    <t t-foreach="page" t-as="layout_category">
+
+                        <t t-if="layout_category_size > 1 or page_size > 1" groups="sale.group_sale_layout">
+                            <tr class="active">
+                                <td colspan="7" style="font-weight: bold; border-bottom: 1px solid black;">&amp;bull;
+                                    <t t-esc="layout_category['name']"/>
+                                </td>
+                            </tr>
+                        </t>
+
+                        <!-- Lines associated -->
+                        <t t-foreach="layout_category['lines']" t-as="l">
+                            <tr>
+                                <td><span t-field="l.name"/></td>
+                                <td class="text-right">
+                                    <span t-field="l.product_uom_qty"/>
+                                </td>
+                                <td class="text-right" t-if="doc.state in ['draft','sent']">
+                                    <span t-field="l.qty_available"/>
+                                </td>
+                                <td class="text-right">
+                                    <span t-field="l.base_price_unit"/>
+                                </td>
+                                <td class="text-right" groups="sale.group_discount_per_so_line">
+                                    <t t-if="l.desc_go_home>0">
+                                        <span t-field="l.desc_go_home" />
+                                    </t> 
+                                    <t t-else="">
+                                        <span t-field="l.discount" />
+                                    </t>
+                                </td>
+                                <td class="text-right">
+                                    <span t-field="l.desc_price_unit"/>
+                                </td>
+                                <td style="display:none" class="text-right">
+                                    <span t-esc="', '.join(map(lambda x: (x.description or x.name), l.tax_id))"/>
+                                </td>
+                                <td class="text-right" groups="sale.group_show_price_subtotal">
+                                    <span t-field="l.price_subtotal"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                                <td class="text-right" groups="sale.group_show_price_subtotal" t-if="doc.state in ['draft','sent']">
+                                    <span t-field="l.price_subtotal_disp"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                                <td class="text-right" groups="sale.group_show_price_total">
+                                    <span t-field="l.price_total"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                                <td class="text-right" groups="sale.group_show_price_total" t-if="doc.state in ['draft','sent']">
+                                    <span t-field="l.price_total_disp"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                            </tr>
+                        </t>
+
+                        <t t-if="(layout_category_size > 1 or page_size > 1) and layout_category['subtotal']" groups="sale.group_sale_layout">
+                            <tr class="text-right">
+                                <td colspan="6">
+                                    <strong>Subtotal: </strong>
+                                    <t t-set="subtotal" t-value="sum(line.price_subtotal for line in layout_category['lines'])"/>
+                                    <span t-esc="subtotal" t-options="{'widget': 'monetary', 'display_currency': doc.pricelist_id.currency_id}"/>
+                                </td>
+                            </tr>
+                        </t>
+
+                    </t>
+                </tbody>
+            </table>            
+        </xpath>
+        <xpath expr="//div[@name='total']" position="inside">             
+            <div t-if="doc.state in ['draft','sent']" class="col-xs-4 pull-right">
+                <table class="table table-condensed" style="min-width: 200px;max-width: 350px;">
+                    <tr class="border-black" style="border-bottom:1px solid #dddddd;">
+                        <td><strong>Subtotal disponible</strong></td>
+                        <td class="text-right">
+                            <span t-field="doc.amount_untaxed_disp"
+                                t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                        </td>
+                    </tr>
+                    <t t-foreach="doc._get_tax_amount_by_group_disp()" t-as="amount_by_group">
+                        <tr style="border-bottom:1px solid #dddddd;">
+                            <t t-if="amount_by_group[3] == 1 and doc.amount_untaxed == amount_by_group[2]">
+                                <td>
+                                    <span t-esc="amount_by_group[0]"/>
+                                    <span>&amp;nbsp;<span>on</span>&amp;nbsp;<t t-esc="amount_by_group[2]" t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/></span>
+                                </td>
+                                <td class="text-right">
+                                    <span t-esc="amount_by_group[1]"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                            </t>
+                            <t t-else ="">
+                                <td>
+                                    <span t-esc="amount_by_group[0]"/>
+                                </td>
+                                <td class="text-right">
+                                    <span t-esc="amount_by_group[1]"
+                                        t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                                </td>
+                            </t>
+                        </tr>
+                    </t>
+                    <tr class="border-black">
+                        <td><strong>Total disponible</strong></td>
+                        <td class="text-right">
+                            <span t-field="doc.amount_total_disp"
+                                t-options='{"widget": "monetary", "display_currency": doc.pricelist_id.currency_id}'/>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </xpath>
+    </template>
+</odoo>

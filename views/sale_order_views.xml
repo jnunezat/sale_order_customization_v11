@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="go_home_it_sale_order_ds_inherit" model="ir.ui.view">
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="go_home.go_home_it_sale_order_inherit"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='desc_price_unit']" position="replace">
+                <field name="desc_price_unit" force_save="1" readonly="1" attrs="{'column_invisible': [('parent.state', 'not in', ['other'])]}"/>
+            </xpath>
+        </field>
+    </record>
+    <record model="ir.ui.view" id="sale_margin_sale_order_ds">
+        <field name="name">sale.order.margin.view.form</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale_margin.sale_margin_sale_order"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='margin']" position="replace">
+                <field name="margin" invisible="1" groups="base.group_user"/>
+                <field string="Márgen(%)" name="margin_porciento" groups="base.group_user"/>
+            </xpath>
+        </field>
+    </record>
+    <record id="ds_sale_order_inherit" model="ir.ui.view">
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='payment_term_id']" position="after">
+                <field name="back_order_id" attrs="{'invisible': [('back_order_id', '=', False)]}"/>
+                <field name="requested_date" attrs="{'invisible': [('state', 'in', ['draft', 'sent'])]}" readonly="1"/>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='product_uom_qty']" position="after">
+                <field name="qty_available" attrs="{'column_invisible': [('parent.state', 'not in', ['draft', 'sent'])]}"/>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='price_total']" position="after">
+                <field name="price_subtotal_disp" attrs="{'column_invisible': [('parent.state', 'not in', ['draft', 'sent'])]}"/>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='name']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='product_uom']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='analytic_tag_ids']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='tax_id']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <xpath expr="//page//field[@name='order_line']//tree//field[@name='product_id']" position="replace">
+                <field name="product_id" options="{'no_create': True, 'no_open': True}" attrs="{'readonly': [('product_updatable', '=', False)]}" force_save="1" context="{'partner_id':parent.partner_id, 'quantity':product_uom_qty, 'pricelist':parent.pricelist_id, 'uom':product_uom, 'company_id': parent.company_id}"/>
+            </xpath>
+            <xpath expr="//group[@name='sale_total']" position="attributes">
+                <attribute name="string">Pedido Total</attribute>
+            </xpath>
+             <xpath expr="//group[@name='sale_total']" position="before">
+                <group states="draft,sent" class="oe_subtotal_footer" string="Disponible" name="sale_total_disp">
+                    <field name="amount_untaxed_disp" widget='monetary' options="{'currency_field': 'currency_id'}"/>
+                    <field name="amount_tax_disp" widget='monetary' options="{'currency_field': 'currency_id'}"/>
+                    <div class="oe_subtotal_footer_separator oe_inline o_td_label">
+                        <label for="amount_total_disp" />
+                    </div>
+                    <field name="amount_total_disp" nolabel="1" class="oe_subtotal_footer_separator" widget='monetary' options="{'currency_field': 'currency_id'}"/>
+                    <field string="Márgen(%)" name="margin_porciento_disp" groups="base.group_user"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+    <record model="ir.ui.view" id="inherit_sale_margin_sale_order_line_form">
+        <field name="name">sale.order.line.tree.margin.view.form</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale_margin.sale_margin_sale_order_line_form"/>
+        <field name="arch" type="xml">
+           <xpath expr="//field[@name='order_line']/tree//field[@name='purchase_price']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+        </field>
+    </record>
+</odoo>
