@@ -18,9 +18,12 @@ class SaleOrderBackorder(models.Model):
     state = fields.Selection([
         ('draft', 'Borrador'),
         ('confirmed', 'Confirmado'),
-        ('cancel', 'Cancelado'),], string='Estado', readonly=True, default='draft', tracking=True)
+        ('cancel', 'Cancelado'),
+    ], string='Estado', readonly=True, default='draft', tracking=True)
     company_id = fields.Many2one('res.company', 'Compañía', default=lambda self: self.env['res.company']._company_default_get('sale.order'))
-    line_ids = fields.One2many('sale.order.backorder.line', 'backorder_id', string='Order Lines', states={'cancel': [('readonly', True)], 'confirmed': [('readonly', True)]}, copy=True, auto_join=True)
+    line_ids = fields.One2many('sale.order.backorder.line', 'backorder_id', string='Order Lines',
+                               states={'cancel': [('readonly', True)], 'confirmed': [('readonly', True)]},
+                               copy=True, auto_join=True)
     currency_id = fields.Many2one("res.currency", related='pricelist_id.currency_id', string="Moneda", readonly=True, required=True)
     pricelist_id = fields.Many2one('product.pricelist', string='Lista de precios', required=True, readonly=True)
     amount_total = fields.Monetary(string='Total', store=True, readonly=True, compute='_amount_all', track_visibility='always')
@@ -29,54 +32,38 @@ class SaleOrderBackorder(models.Model):
     partner_shipping_id = fields.Many2one('res.partner', string='Dirección de Entrega', readonly=True, required=True, states={'draft': [('readonly', False)]})
     payment_term_id = fields.Many2one('account.payment.term', string='Plazos de pago')
     transport_company_id = fields.Many2one('res.partner', string='Empresa de transporte')
-    fecha_prevista = fields.Date(
-        string='Fecha prevista',
-        store=True,
-        compute='_compute_fecha_prevista'
-    )
+    fecha_prevista = fields.Date(string='Fecha prevista', store=True, compute='_compute_fecha_prevista')
 
     def _compute_name(self):
         for record in self:
-            if record.id:
-                record.name = 'BO' + str(record.id).zfill(5)
-            else:
-                record.name = False
+            record.name = ('BO' + str(record.id).zfill(5)) if record.id else False
 
     @api.depends('line_ids.date_prev')
     def _compute_fecha_prevista(self):
         for order in self:
-            fechas = order.line_ids.filtered(lambda r: r.product_qty_confirmed > 0).mapped('date_prev')
-            fecha_prevista = min(fechas) if fechas else False
-            order.fecha_prevista = fields.Datetime.from_string(fecha_prevista) if fecha_prevista else False
+            fechas = order.line_ids.filtered(lambda r: r.product_qty_confirmed > 0 and r.date_prev).mapped('date_prev')
+            order.fecha_prevista = fields.Datetime.from_string(min(fechas)) if fechas else False
 
     @api.depends('line_ids.price_subtotal')
     def _amount_all(self):
-        """
-        Compute the total amounts of the SO.
-        """
         for order in self:
-            amount_untaxed = 0.0
-            for line in order.line_ids:
-                amount_untaxed += line.price_subtotal
-            order.update({
-                'amount_total': amount_untaxed,
-            })
+            amount_untaxed = sum(order.line_ids.mapped('price_subtotal'))
+            order.amount_total = amount_untaxed
 
     def action_cancel_backorder(self):
         self.state = 'cancel'
         return True
-       
+
     def action_confirm_backorder(self):
-        # Filtrar líneas con cantidad confirmada
-        lines_confirmed = [line for line in self.line_ids if line.product_qty_confirmed > 0]
+        # Solo líneas con cantidad confirmada y con fecha prevista calculada
+        lines_confirmed = self.line_ids.filtered(lambda l: l.product_qty_confirmed > 0 and l.date_prev)
         if not lines_confirmed:
             raise exceptions.ValidationError("No hay cantidad confirmada.")
 
-        # Agrupar líneas por fechas previstas con diferencia máxima de 10 días
+        # Agrupar por fecha prevista con tolerancia de 10 días
         grouped_lines = []
         sorted_lines = sorted(lines_confirmed, key=lambda l: fields.Datetime.from_string(l.date_prev))
         current_group = [sorted_lines[0]]
-
         for line in sorted_lines[1:]:
             current_date = fields.Datetime.from_string(line.date_prev)
             group_date = fields.Datetime.from_string(current_group[-1].date_prev)
@@ -87,7 +74,7 @@ class SaleOrderBackorder(models.Model):
                 current_group = [line]
         grouped_lines.append(current_group)
 
-        # Crear órdenes de venta para cada grupo
+        # Crear órdenes de venta por grupo (creación de líneas en lote)
         for group in grouped_lines:
             sale_order_id = self.env['sale.order'].create({
                 'partner_id': self.partner_id.id,
@@ -97,36 +84,31 @@ class SaleOrderBackorder(models.Model):
                 'partner_shipping_id': self.partner_shipping_id.id,
                 'payment_term_id': self.payment_term_id.id,
                 'back_order_origin_id': self.id,
-                'transport_company_id': self.transport_company_id.id if self.transport_company_id else False
+                'transport_company_id': self.transport_company_id.id if self.transport_company_id else False,
             })
-            for line in group:
-                self.env['sale.order.line'].create({
-                    'product_id': line.product_id.id,
-                    'product_uom_qty': line.product_qty_confirmed,
-                    'discount': line.discount,
-                    'price_unit': line.price_unit,
-                    'order_id': sale_order_id.id
-                })
-            group_len = len(group)
-            if group[group_len-1].date_prev:
-                # Zona horaria del usuario
+            line_vals = [{
+                'product_id': l.product_id.id,
+                'product_uom_qty': l.product_qty_confirmed,
+                'discount': l.discount,
+                'price_unit': l.price_unit,
+                'order_id': sale_order_id.id,
+            } for l in group]
+            self.env['sale.order.line'].create(line_vals)
+
+            # requested_date desde la última línea del grupo (si existe)
+            last = group[-1]
+            if last.date_prev:
                 local_tz = pytz.timezone(self.env.user.partner_id.tz)
-                # 1. Crear el datetime en la zona local
-                dt_local = local_tz.localize(datetime.strptime(group[group_len-1].date_prev + ' 00:00:00', DEFAULT_SERVER_DATETIME_FORMAT))
-
-                # 2. Convertir a UTC
+                dt_local = local_tz.localize(datetime.strptime(last.date_prev + ' 00:00:00', DEFAULT_SERVER_DATETIME_FORMAT))
                 dt_utc = dt_local.astimezone(pytz.utc)
-
-                # 3. Guardar en el campo Datetime (en UTC)
                 sale_order_id.requested_date = fields.Datetime.to_string(dt_utc)
+
             ctx = dict(self._context, origin_backorder=1)
             sale_order_id.with_context(ctx).action_confirm()
-            """ picking = self.env['stock.picking'].search([('sale_id', '=', sale_order_id.id)], limit=1)
-            if picking:
-                picking.state = 'assigned' """
 
         self.state = 'confirmed'
         return True
+
 
 class SaleOrderBackorderLine(models.Model):
     _name = "sale.order.backorder.line"
@@ -151,17 +133,18 @@ class SaleOrderBackorderLine(models.Model):
         if not self.env.user.has_group('sales_team.group_sale_manager'):
             raise UserError('Usted no tiene permiso para eliminar')
         return super(SaleOrderBackorderLine, self).unlink()
-    
+
     @api.onchange('price_unit')
     def _onchange_price_unit(self):
         if not self.env.user.has_group('sales_team.group_sale_manager'):
             raise UserError('Usted no tiene permiso para modificar el precio unitario.')
-    
+
     def _compute_date_disp(self):
         for line in self:
-            product_uom_dispon =  line.product_id.qty_available - line.product_id.outgoing_qty
+            product_uom_dispon = line.product_id.qty_available - line.product_id.outgoing_qty
             line.product_uom_dispon = product_uom_dispon if product_uom_dispon > 0 else 0
 
+    # 🔧 Optimizado: sin N+1 y sin depender de virtual_available
     @api.depends('product_id', 'backorder_id.date')
     def _compute_date_prev(self):
         # reset
@@ -172,8 +155,7 @@ class SaleOrderBackorderLine(models.Model):
             return
 
         Pol = self.env['purchase.order.line']
-
-        # agrupar líneas por backorder (cada uno con su fecha base)
+        # agrupar por backorder para usar la fecha de cada uno
         back_to_lines = {}
         for line in self:
             if line.backorder_id and line.product_id:
@@ -183,12 +165,9 @@ class SaleOrderBackorderLine(models.Model):
             bo = lines[0].backorder_id
             prod_ids = list({l.product_id.id for l in lines})
             if not prod_ids:
-                for l in lines:
-                    l.date_prev = bo.date
-                    l.product_qty_prev = 0
                 continue
 
-            # 1) mínima date_planned por producto (UNA consulta)
+            # 1) mínima date_planned por producto en UNA consulta
             rows = Pol.read_group(
                 domain=[
                     ('order_id.state', '=', 'purchase'),
@@ -199,19 +178,7 @@ class SaleOrderBackorderLine(models.Model):
                 groupby=['product_id'],
                 lazy=False,
             )
-
-            def _prod_id_val(v):
-                # read_group devuelve m2o como (id, name) o como id según versión
-                return v[0] if isinstance(v, (list, tuple)) else v
-
-            def _min_date(row):
-                # tolerante a versiones: v11/12 -> 'date_planned'; v13+ -> 'date_planned_min'
-                return row.get('date_planned') or row.get('date_planned_min')
-
-            min_by_prod = {
-                _prod_id_val(r['product_id']): _min_date(r)
-                for r in rows
-            }
+            min_by_prod = {r['product_id'][0]: r['date_planned_min'] for r in rows}
 
             # 2) cantidad para (producto, min_date) con pequeña caché
             qty_cache = {}
@@ -229,8 +196,7 @@ class SaleOrderBackorderLine(models.Model):
                         qty_cache[key] = pol.product_qty if pol else 0
                     l.product_qty_prev = qty_cache[key]
                 else:
-                    # sin PO futuro → usar fecha del backorder como respaldo (no rompe el sorted)
-                    l.date_prev = bo.date
+                    l.date_prev = False
                     l.product_qty_prev = 0
 
     @api.onchange('product_qty_confirmed', 'virtual_available')
