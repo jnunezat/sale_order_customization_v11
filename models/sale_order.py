@@ -20,6 +20,7 @@ class SaleOrderLine(models.Model):
             self.product_packaging = False
         return {}
     
+    @api.depends('product_id', 'purchase_price', 'product_uom_qty', 'qty_available', 'price_unit', 'price_subtotal_disp')
     def _product_margin_disp(self):
         if not self.env.in_onchange:
             # prefetch the fields needed for the computation
@@ -29,6 +30,7 @@ class SaleOrderLine(models.Model):
             price = line.purchase_price
             line.margin_disp = currency.round(line.price_subtotal_disp - (price * line.qty_available))
 
+    @api.depends('product_id.virtual_available', 'product_uom_qty', 'product_id')
     def _compute_qty_available(self):
         for line in self:
             qty_available = line.product_id.qty_available - line.product_id.outgoing_qty
@@ -39,6 +41,7 @@ class SaleOrderLine(models.Model):
             elif qty_available > line.product_uom_qty:
                 line.qty_available = line.product_uom_qty
 
+    @api.depends('qty_available', 'product_uom_qty', 'discount', 'price_unit', 'tax_id')
     def _compute_amount_disp(self):
         """
         Compute the amounts of the SO line.
@@ -67,16 +70,19 @@ class SaleOrder(models.Model):
     back_order_origin_id = fields.Many2one('sale.order.backorder', string="Backorder origen", readonly=True)
     transport_company_id = fields.Many2one('res.partner')
 
+    @api.depends('margin', 'amount_untaxed')
     def _product_margin_porc(self):
         for order in self:
             order.margin_porciento = order.margin/order.amount_untaxed*100 if order.amount_untaxed>0 else 0
 
+    @api.depends('order_line.margin_disp')
     def _product_margin_disp(self):
         for order in self:
             if order.order_line:
                 order.margin_disp = sum(order.order_line.filtered(lambda r: r.state != 'cancel').mapped('margin_disp'))
                 order.margin_porciento_disp = order.margin_disp/order.amount_untaxed_disp*100 if order.amount_untaxed_disp>0 else 0
-       
+
+    @api.depends('order_line.price_subtotal_disp')   
     def _amount_all_disp(self):
         """
         Compute the total amounts of the SO.
