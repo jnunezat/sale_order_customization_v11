@@ -2,7 +2,7 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 {
     'name' : 'Sale Order Customization',
-    'version' : '5.0',
+    'version' : '1.0',
     'author':'',
     'category': 'Sales',
     'description': """
@@ -20,7 +20,6 @@
     ],        
     'installable': True,
     'application': True,
-    "pre_init_hook": "pre_init_hook",
     'auto_install': False
 
 }

@@ -87,13 +87,16 @@ class SaleOrder(models.Model):
                 amount_untaxed_disp += line.price_subtotal_disp
                 amount_tax_disp += line.price_tax_disp
             order.amount_untaxed_disp = amount_untaxed_disp
-            order.amount_untaxed_disp = amount_tax_disp
-            order.amount_untaxed_disp = amount_untaxed_disp + amount_tax_disp
+            order.amount_tax_disp = amount_tax_disp
+            order.amount_total_disp = amount_untaxed_disp + amount_tax_disp
 
-    @api.multi
     def action_confirm(self):
+        # Validación única de cantidades
+        if any(line.product_uom_qty <= 0 for line in self.order_line):
+            raise exceptions.UserError("La cantidad del producto de todas las líneas debe ser mayor a cero.")
         self.back_order_id = False
-        if any(line.qty_available < line.product_uom_qty for line in self.order_line) and self.env.context.get('origin_backorder')!=1:
+        shortage_lines = self.order_line.filtered(lambda l: l.qty_available < l.product_uom_qty)
+        if shortage_lines and self.env.context.get('origin_backorder')!=1:
             backorder_id = self.env['sale.order.backorder'].create({
                 'sale_order_origin_id': self.id,
                 'partner_id': self.partner_id.id,
@@ -106,32 +109,30 @@ class SaleOrder(models.Model):
             })
             self.back_order_id = backorder_id.id            
             model_line = self.env['sale.order.backorder.line']
-            for line in self.order_line:
-                if line.product_uom_qty <= 0:
-                    raise exceptions.UserError("La cantidad del producto de todas las líneas debe ser mayor a cero.")            
-                if line.qty_available < line.product_uom_qty:
-                    cant_pendiente = line.product_uom_qty - line.qty_available
-                    line.product_uom_qty = line.qty_available
-                    model_line.create({
-                        'product_id': line.product_id.id,
-                        'product_uom_qty': cant_pendiente,
-                        'discount': line.discount,
-                        'price_unit': line.price_unit,
-                        'backorder_id': backorder_id.id                    
-                    })           
+            for line in shortage_lines:
+                cant_pendiente = line.product_uom_qty - line.qty_available
+                line.product_uom_qty = line.qty_available
+                model_line.create({
+                    'product_id': line.product_id.id,
+                    'product_uom_qty': cant_pendiente,
+                    'discount': line.discount,
+                    'price_unit': line.price_unit,
+                    'backorder_id': backorder_id.id                    
+                })           
         
         # Check if there are lines with product_uom_qty > 0
         valid_lines = self.order_line.filtered(lambda line: line.product_uom_qty > 0)
         res = True
         if valid_lines:            
             # Remove lines with product_uom_qty == 0
-            self.order_line.filtered(lambda line: line.product_uom_qty == 0).unlink()
+            zero_lines = self.order_line.filtered(lambda line: line.product_uom_qty == 0)
+            if zero_lines:
+                zero_lines.unlink()
             res=super(SaleOrder,self).action_confirm()
         if self.back_order_id:
             self.message_post(body="Se ha generado un backorder para el pedido %s." % self.name)
         return res
     
-    @api.multi
     def _get_tax_amount_by_group_disp(self):
         self.ensure_one()
         res = {}
